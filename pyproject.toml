@@ -1,0 +1,54 @@
+[tool.poetry]
+name = "dalmatian"
+version = "1.0.0"
+description = "Fast HTTP queries over file datasets with PySpark, Valkey reuse, async execution, and flexible result delivery."
+readme = "README.md"
+packages = [{ include = "dalmatian", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+fastapi = ">=0.116,<1"
+uvicorn = { version = ">=0.35,<1", extras = ["standard"] }
+pydantic = ">=2.11,<3"
+pydantic-settings = ">=2.10,<3"
+pyspark = "4.2.0"
+valkey = ">=6.1,<7"
+sqlglot = ">=27,<30"
+prometheus-client = ">=0.22,<1"
+sqlalchemy = ">=2.0,<3"
+alembic = ">=1.16,<2"
+psycopg = { version = ">=3.2,<4", extras = ["binary"] }
+pymysql = ">=1.1,<2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.4,<9"
+pytest-cov = ">=6.2,<7"
+httpx = ">=0.28,<1"
+ruff = ">=0.12,<1"
+
+[tool.poetry.scripts]
+dalmatian-api = "dalmatian.main:run"
+dalmatian-worker = "dalmatian.worker:run"
+dalmatian-admin = "dalmatian.admin:run"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "integration: starts local infrastructure such as Spark or Valkey",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["dalmatian"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

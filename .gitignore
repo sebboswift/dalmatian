@@ -1,0 +1,71 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.cache/
+.hypothesis/
+.tox/
+.nox/
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging/build output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and local process state
+*.log
+*.pid
+*.pid.lock
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Spark / Java local state
+spark-warehouse/
+metastore_db/
+derby.log
+.sparkStaging/
+
+# IDE/editor metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS/archive metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+__MACOSX/
+._*
+
+# Generated query output
+exports/*
+!exports/.gitkeep

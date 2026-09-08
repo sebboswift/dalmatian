@@ -1,0 +1,246 @@
+image:
+  repository: dalmatian
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Use a dedicated service account when cloud storage uses workload identity.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  # Dalmatian and the bundled Spark image intentionally share this identity for PVC writes.
+  runAsUser: 185
+  runAsGroup: 185
+  fsGroup: 185
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+api:
+  replicas: 2
+  # One API pod owns one long-lived Spark driver. Keep this bounded to avoid driver overload.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  extraEnv: []
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  pdb:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+worker:
+  # StatefulSet ordinals become preferred affinity shards. Idle workers can steal from other shards.
+  replicas: 2
+  terminationGracePeriodSeconds: 120
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  extraEnv: []
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  pdb:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 16
+    # Requires a Prometheus/custom-metrics adapter exposing this metric.
+    queueDepthMetricName: dalmatian_job_queue_depth
+    targetAverageValue: "20"
+
+config:
+  # Leave empty when using the bundled Spark master or Valkey. Set these for external services.
+  sparkMaster: ""
+  valkeyUrl: ""
+
+  # Each API pod and async worker owns a long-lived Spark application. These settings cap one application's claim on the cluster.
+  # The bundled workers provide four cores total. Keep one application below that cluster budget.
+  sparkAppMaxCores: 2
+  sparkExecutorCores: 2
+  sparkExecutorMemory: 2g
+  # Set only when you want a fixed executor count. Leaving it empty lets the Spark deployment decide.
+  sparkExecutorInstances: ""
+
+  # Local sources without a location are resolved below this mount.
+  dataRoot: /data
+
+  # Named remote input roots. Query bodies select a name rather than sending arbitrary cloud URIs.
+  sourceLocations: {}
+
+  # Approved store-mode output roots. S3 roots may use s3:// and are normalized to s3a://.
+  storageLocations:
+    local: file:///exports
+
+  # Valkey stores one durable logical pointer per error/overwrite destination. Attempt data and manifests remain immutable in storage.
+  outputPublicationPrefix: dalmatian:outputs
+
+  # Optional PostgreSQL/MySQL SQLAlchemy URL for invocation audit data and DB-managed storage locations.
+  # Run the metadata migration job before application pods use a new schema.
+  # For real credentials, prefer metadataUrlSecret so the URL does not live in Helm release values.
+  metadataUrl: ""
+  metadataUrlSecret:
+    name: ""
+    key: url
+
+  # Hadoop connector Maven coordinates and Spark/Hadoop configuration for S3A, GCS, or ABFS.
+  sparkPackages: ""
+  sparkConfig: {}
+
+  # Exact inline results live in Valkey. Oversized compressed entries are skipped.
+  defaultCacheTtlSeconds: 300
+  maxCacheTtlSeconds: 3600
+  resultCacheMaxBytes: "4194304"
+  resultCacheSingleflightWaitSeconds: 15
+  resultCacheLockSeconds: 120
+
+  # Inline output has both row and byte guards. Large results should stream or store.
+  resultRowLimit: 10000
+  maxInlineBytes: "8388608"
+
+  # Persisted Spark DataFrames are process-local and use DISK_ONLY to avoid executor-heap pressure.
+  datasetCacheEntries: 32
+  datasetCacheTtlSeconds: 1800
+
+  # Admission control and Spark job-group deadlines.
+  maxConcurrentQueries: 4
+  admissionWaitSeconds: 0.25
+  defaultQueryTimeoutSeconds: 300
+  maxQueryTimeoutSeconds: 3600
+
+  # Async queue retention, leases, retry backoff, affinity, and pressure limits.
+  jobTtlSeconds: 86400
+  # Idempotency-Key bindings should normally live at least as long as job records.
+  idempotencyTtlSeconds: 86400
+  jobLeaseSeconds: 60
+  workerReserveTimeoutSeconds: 2
+  workerReapIntervalSeconds: 15
+  workerMaxAttempts: 3
+  workerRetryBaseSeconds: 2
+  workerRetryMaxSeconds: 60
+  workerAffinityShards: 8
+  maxQueueDepth: 10000
+  logLevel: INFO
+
+# Optional ingress for the API. With nginx ingress, datasetAffinity hashes requests by X-Dalmatian-Affinity-Key.
+# Call POST /v1/query/affinity once, then send that header on repeated sync requests for the same source set.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  datasetAffinity:
+    enabled: false
+  hosts:
+    - host: dalmatian.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Database schema migrations are explicit. Enable this hook when metadataUrl, metadataUrlSecret, or matching extraEnv supplies DALMATIAN_METADATA_URL.
+metadataMigrations:
+  enabled: false
+  extraEnv: []
+  backoffLimit: 3
+
+# Worker metrics are served on a separate HTTP port. ServiceMonitor resources require Prometheus Operator CRDs.
+monitoring:
+  workerMetricsPort: 9090
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+    additionalLabels: {}
+
+spark:
+  enabled: true
+  image: apache/spark:4.2.0
+  workerReplicas: 2
+  workerCores: 2
+  workerMemory: 2g
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+valkey:
+  # The bundled single-node Valkey is useful for a self-contained install. Use an external HA service in production.
+  enabled: true
+  image: valkey/valkey:8.1.10-alpine
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    existingClaim: ""
+    storageClassName: ""
+    size: 1Gi
+
+service:
+  type: ClusterIP
+  port: 8000
+
+networkPolicy:
+  enabled: false
+  # Empty ingress namespace selector allows cluster namespaces. Narrow this for your ingress controller.
+  ingressNamespaceSelector: {}
+
+# The local/PVC source mount is optional. Disable it when every source uses named object storage.
+data:
+  enabled: true
+  existingClaim: ""
+  createClaim: true
+  storageClassName: ""
+  size: 1Gi
+  accessModes:
+    - ReadWriteMany
+
+# Required only when a configured file:// output root needs shared storage.
+outputs:
+  enabled: true
+  existingClaim: ""
+  createClaim: true
+  storageClassName: ""
+  size: 1Gi
+  accessModes:
+    - ReadWriteMany
+  mountPath: /exports

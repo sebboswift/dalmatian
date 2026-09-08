@@ -1,0 +1,17 @@
+{{- if and .Values.data.enabled .Values.data.createClaim (not .Values.data.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dalmatian.fullname" . }}-data
+  labels:
+    {{- include "dalmatian.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.data.accessModes | nindent 4 }}
+  {{- if .Values.data.storageClassName }}
+  storageClassName: {{ .Values.data.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.data.size }}
+{{- end }}

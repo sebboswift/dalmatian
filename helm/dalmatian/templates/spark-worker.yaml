@@ -1,0 +1,87 @@
+{{- if .Values.spark.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dalmatian.fullname" . }}-spark-worker
+  labels:
+    {{- include "dalmatian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-worker
+spec:
+  replicas: {{ .Values.spark.workerReplicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dalmatian.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: spark-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "dalmatian.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: spark-worker
+    spec:
+      serviceAccountName: {{ include "dalmatian.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.spark.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.spark.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.spark.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: spark-worker
+          image: {{ .Values.spark.image | quote }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command:
+            - /opt/spark/bin/spark-class
+            - org.apache.spark.deploy.worker.Worker
+            - {{ include "dalmatian.sparkMaster" . | quote }}
+            - --cores
+            - {{ .Values.spark.workerCores | quote }}
+            - --memory
+            - {{ .Values.spark.workerMemory | quote }}
+            - --webui-port
+            - "8081"
+          {{- with .Values.spark.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: ui
+              containerPort: 8081
+          {{- if or .Values.data.enabled .Values.outputs.enabled }}
+          volumeMounts:
+            {{- if .Values.data.enabled }}
+            - name: data
+              mountPath: {{ .Values.config.dataRoot }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.outputs.enabled }}
+            - name: outputs
+              mountPath: {{ .Values.outputs.mountPath }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.spark.resources | nindent 12 }}
+      {{- if or .Values.data.enabled .Values.outputs.enabled }}
+      volumes:
+        {{- if .Values.data.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "dalmatian.dataClaim" . }}
+        {{- end }}
+        {{- if .Values.outputs.enabled }}
+        - name: outputs
+          persistentVolumeClaim:
+            claimName: {{ include "dalmatian.outputClaim" . }}
+        {{- end }}
+      {{- end }}
+{{- end }}

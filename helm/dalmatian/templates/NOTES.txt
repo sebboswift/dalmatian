@@ -1,0 +1,5 @@
+API service:
+  {{ include "dalmatian.fullname" . }}-api:{{ .Values.service.port }}
+
+Run locally with port-forward:
+  kubectl port-forward svc/{{ include "dalmatian.fullname" . }}-api 8000:{{ .Values.service.port }}

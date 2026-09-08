@@ -1,0 +1,201 @@
+services:
+  valkey:
+    image: valkey/valkey:8.1.10-alpine
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - valkey-data:/data
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:17-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: dalmatian
+      POSTGRES_USER: dalmatian
+      POSTGRES_PASSWORD: dalmatian
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dalmatian"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    profiles: ["mysql"]
+    environment:
+      MYSQL_DATABASE: dalmatian
+      MYSQL_USER: dalmatian
+      MYSQL_PASSWORD: dalmatian
+      MYSQL_ROOT_PASSWORD: root
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: ["s3"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: dalmatian
+      MINIO_ROOT_PASSWORD: dalmatian-secret
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: ["s3"]
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set local http://minio:9000 dalmatian dalmatian-secret; do sleep 1; done
+        mc mb --ignore-existing local/dalmatian
+
+  output-init:
+    image: busybox:1.36
+    command: ["sh", "-c", "chmod 0777 /exports"]
+    volumes:
+      - outputs:/exports
+
+  spark-master:
+    image: apache/spark:4.2.0
+    restart: unless-stopped
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+
+  spark-worker-1: &spark-worker
+    image: apache/spark:4.2.0
+    restart: unless-stopped
+    depends_on:
+      spark-master:
+        condition: service_started
+      output-init:
+        condition: service_completed_successfully
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "2"
+      - --memory
+      - 2g
+      - --webui-port
+      - "8081"
+    volumes:
+      - ./data:/data:ro
+      - outputs:/exports
+    ports:
+      - "8081:8081"
+
+  spark-worker-2:
+    <<: *spark-worker
+    ports:
+      - "8082:8081"
+
+  api: &app
+    build: .
+    restart: unless-stopped
+    depends_on:
+      valkey:
+        condition: service_healthy
+      spark-master:
+        condition: service_started
+      spark-worker-1:
+        condition: service_started
+      spark-worker-2:
+        condition: service_started
+      output-init:
+        condition: service_completed_successfully
+    environment: &app-env
+      DALMATIAN_SPARK_MASTER: spark://spark-master:7077
+      DALMATIAN_SPARK_APP_NAME: ${DALMATIAN_SPARK_APP_NAME:-dalmatian}
+      DALMATIAN_SPARK_APP_MAX_CORES: ${DALMATIAN_SPARK_APP_MAX_CORES:-2}
+      DALMATIAN_SPARK_EXECUTOR_CORES: ${DALMATIAN_SPARK_EXECUTOR_CORES:-2}
+      DALMATIAN_SPARK_EXECUTOR_MEMORY: ${DALMATIAN_SPARK_EXECUTOR_MEMORY:-2g}
+      DALMATIAN_SPARK_EXECUTOR_INSTANCES: ${DALMATIAN_SPARK_EXECUTOR_INSTANCES:-}
+      DALMATIAN_VALKEY_URL: valkey://valkey:6379/0
+      DALMATIAN_DATA_ROOT: /data
+      DALMATIAN_SOURCE_LOCATIONS: '${DALMATIAN_SOURCE_LOCATIONS:-{}}'
+      DALMATIAN_STORAGE_LOCATIONS: '${DALMATIAN_STORAGE_LOCATIONS:-{"local":"file:///exports"}}'
+      DALMATIAN_OUTPUT_PUBLICATION_PREFIX: ${DALMATIAN_OUTPUT_PUBLICATION_PREFIX:-dalmatian:outputs}
+      DALMATIAN_METADATA_URL: ${DALMATIAN_METADATA_URL:-}
+      DALMATIAN_SPARK_PACKAGES: ${DALMATIAN_SPARK_PACKAGES:-}
+      DALMATIAN_SPARK_CONFIG: '${DALMATIAN_SPARK_CONFIG:-{}}'
+      DALMATIAN_DEFAULT_CACHE_TTL_SECONDS: ${DALMATIAN_DEFAULT_CACHE_TTL_SECONDS:-300}
+      DALMATIAN_MAX_CACHE_TTL_SECONDS: ${DALMATIAN_MAX_CACHE_TTL_SECONDS:-3600}
+      DALMATIAN_RESULT_CACHE_MAX_BYTES: ${DALMATIAN_RESULT_CACHE_MAX_BYTES:-4194304}
+      DALMATIAN_RESULT_CACHE_SINGLEFLIGHT_WAIT_SECONDS: ${DALMATIAN_RESULT_CACHE_SINGLEFLIGHT_WAIT_SECONDS:-15}
+      DALMATIAN_RESULT_CACHE_LOCK_SECONDS: ${DALMATIAN_RESULT_CACHE_LOCK_SECONDS:-120}
+      DALMATIAN_RESULT_ROW_LIMIT: ${DALMATIAN_RESULT_ROW_LIMIT:-10000}
+      DALMATIAN_MAX_INLINE_BYTES: ${DALMATIAN_MAX_INLINE_BYTES:-8388608}
+      DALMATIAN_DATASET_CACHE_ENTRIES: ${DALMATIAN_DATASET_CACHE_ENTRIES:-32}
+      DALMATIAN_DATASET_CACHE_TTL_SECONDS: ${DALMATIAN_DATASET_CACHE_TTL_SECONDS:-1800}
+      DALMATIAN_MAX_CONCURRENT_QUERIES: ${DALMATIAN_MAX_CONCURRENT_QUERIES:-4}
+      DALMATIAN_ADMISSION_WAIT_SECONDS: ${DALMATIAN_ADMISSION_WAIT_SECONDS:-0.25}
+      DALMATIAN_DEFAULT_QUERY_TIMEOUT_SECONDS: ${DALMATIAN_DEFAULT_QUERY_TIMEOUT_SECONDS:-300}
+      DALMATIAN_MAX_QUERY_TIMEOUT_SECONDS: ${DALMATIAN_MAX_QUERY_TIMEOUT_SECONDS:-3600}
+      DALMATIAN_QUEUE_NAME: ${DALMATIAN_QUEUE_NAME:-dalmatian:jobs}
+      DALMATIAN_JOB_TTL_SECONDS: ${DALMATIAN_JOB_TTL_SECONDS:-86400}
+      DALMATIAN_WORKER_AFFINITY_SHARDS: ${DALMATIAN_WORKER_AFFINITY_SHARDS:-8}
+      DALMATIAN_WORKER_AFFINITY_SHARD: ${DALMATIAN_WORKER_AFFINITY_SHARD:-}
+      DALMATIAN_IDEMPOTENCY_TTL_SECONDS: ${DALMATIAN_IDEMPOTENCY_TTL_SECONDS:-86400}
+      DALMATIAN_JOB_LEASE_SECONDS: ${DALMATIAN_JOB_LEASE_SECONDS:-60}
+      DALMATIAN_WORKER_RESERVE_TIMEOUT_SECONDS: ${DALMATIAN_WORKER_RESERVE_TIMEOUT_SECONDS:-2}
+      DALMATIAN_WORKER_REAP_INTERVAL_SECONDS: ${DALMATIAN_WORKER_REAP_INTERVAL_SECONDS:-15}
+      DALMATIAN_WORKER_MAX_ATTEMPTS: ${DALMATIAN_WORKER_MAX_ATTEMPTS:-3}
+      DALMATIAN_WORKER_RETRY_BASE_SECONDS: ${DALMATIAN_WORKER_RETRY_BASE_SECONDS:-2}
+      DALMATIAN_WORKER_RETRY_MAX_SECONDS: ${DALMATIAN_WORKER_RETRY_MAX_SECONDS:-60}
+      DALMATIAN_MAX_QUEUE_DEPTH: ${DALMATIAN_MAX_QUEUE_DEPTH:-10000}
+      DALMATIAN_WORKER_METRICS_HOST: ${DALMATIAN_WORKER_METRICS_HOST:-0.0.0.0}
+      DALMATIAN_WORKER_METRICS_PORT: ${DALMATIAN_WORKER_METRICS_PORT:-9090}
+      DALMATIAN_LOG_LEVEL: ${DALMATIAN_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/data:ro
+      - outputs:/exports
+    ports:
+      - "8000:8000"
+
+  async-worker:
+    <<: *app
+    command: ["python", "-m", "dalmatian.worker"]
+    environment: *app-env
+    stop_grace_period: 2m
+    ports: []
+    expose:
+      - "9090"
+
+volumes:
+  valkey-data:
+  outputs:
+  postgres-data:
+  mysql-data:
+  minio-data:

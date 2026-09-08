@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install poetry
+      - run: poetry install
+      - run: poetry check
+      - run: poetry run ruff check src tests benchmarks
+      - run: poetry run pytest -m "not integration"
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      valkey:
+        image: valkey/valkey:8.1.10-alpine
+        ports:
+          - 6379:6379
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: dalmatian
+          POSTGRES_USER: dalmatian
+          POSTGRES_PASSWORD: dalmatian
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dalmatian"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: dalmatian
+          MYSQL_USER: dalmatian
+          MYSQL_PASSWORD: dalmatian
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -uroot -proot"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DALMATIAN_TEST_VALKEY_URL: valkey://localhost:6379/15
+      DALMATIAN_TEST_POSTGRES_URL: postgresql+psycopg://dalmatian:dalmatian@localhost:5432/dalmatian
+      DALMATIAN_TEST_MYSQL_URL: mysql+pymysql://dalmatian:dalmatian@localhost:3306/dalmatian
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: pip install poetry
+      - run: poetry install
+      - run: poetry run pytest -m integration
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint ./helm/dalmatian
+      - run: helm template dalmatian ./helm/dalmatian >/tmp/dalmatian.yaml
+      - run: docker compose config --quiet
+      - run: docker build -t dalmatian:ci .

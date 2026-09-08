@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "dalmatian.fullname" . }}-worker
+  labels:
+    {{- include "dalmatian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: async-worker
+spec:
+  serviceName: {{ include "dalmatian.fullname" . }}-worker
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dalmatian.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: async-worker
+  template:
+    metadata:
+      annotations:
+        checksum/dalmatian-config: {{ toJson .Values.config | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        app.kubernetes.io/name: {{ include "dalmatian.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: async-worker
+    spec:
+      serviceAccountName: {{ include "dalmatian.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["python", "-m", "dalmatian.worker"]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.monitoring.workerMetricsPort }}
+          env:
+            - name: SPARK_LOCAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- include "dalmatian.commonEnv" . | nindent 12 }}
+            {{- with .Values.worker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if or .Values.data.enabled .Values.outputs.enabled }}
+          volumeMounts:
+            {{- if .Values.data.enabled }}
+            - name: data
+              mountPath: {{ .Values.config.dataRoot }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.outputs.enabled }}
+            - name: outputs
+              mountPath: {{ .Values.outputs.mountPath }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- if or .Values.data.enabled .Values.outputs.enabled }}
+      volumes:
+        {{- if .Values.data.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "dalmatian.dataClaim" . }}
+        {{- end }}
+        {{- if .Values.outputs.enabled }}
+        - name: outputs
+          persistentVolumeClaim:
+            claimName: {{ include "dalmatian.outputClaim" . }}
+        {{- end }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dalmatian.fullname" . }}-worker
+  labels:
+    {{- include "dalmatian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: async-worker
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: {{ include "dalmatian.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: async-worker
+  ports:
+    - name: metrics
+      port: {{ .Values.monitoring.workerMetricsPort }}
+      targetPort: metrics

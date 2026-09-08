@@ -1,0 +1,59 @@
+.git
+.github
+.gitignore
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Python/editor caches
+.venv
+venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.pyright
+.cache
+.hypothesis
+.tox
+.nox
+.ipynb_checkpoints
+.idea
+.vscode
+
+# Build/test output
+build
+dist
+*.egg-info
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
+
+# Local runtime state
+*.log
+*.pid
+*.db
+*.sqlite
+*.sqlite3
+spark-warehouse
+metastore_db
+derby.log
+.sparkStaging
+exports
+
+# Not needed in the application image
+benchmarks
+tests
+helm
+data
+
+# OS/archive metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+__MACOSX/
+._*

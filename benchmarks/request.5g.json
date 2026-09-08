@@ -1,0 +1,11 @@
+{
+  "sql": "select count(*) as rows, sum(id) as checksum from events",
+  "sources": {
+    "events": {
+      "path": "benchmark-parquet",
+      "format": "parquet",
+      "version": "generated-5.001-gib-v3"
+    }
+  },
+  "max_rows": 10
+}
